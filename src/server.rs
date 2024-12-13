@@ -60,6 +60,7 @@ impl ServerActions for Server {
             }
         })
     }
+    // TODO: Document this
     fn add_route<F>(&mut self, path: &str, _handler: F)
     where
         F: Fn() + Send + Sync + 'static,
@@ -121,13 +122,16 @@ async fn start_server(server: Server) -> Result<(), Box<dyn std::error::Error>> 
     }
 }
 
+// TODO: Document this
 async fn handle_client(mut socket: TcpStream) {
     println!(
         "New client connected, Remote addr {:?}",
         socket.peer_addr().unwrap()
     );
-    socket.set_nodelay(true).unwrap();
-    let mut buffer = [0; 2048];
+    let mut buffer = [0; 1024];
+    let mut content: Vec<u8> = vec![];
+    let mut content_length: usize = 0;
+
     loop {
         match socket.read(&mut buffer).await {
             Ok(0) => {
@@ -135,13 +139,49 @@ async fn handle_client(mut socket: TcpStream) {
                 break;
             }
             Ok(size) => {
-                let header = String::from_utf8_lossy(&buffer[..size]);
-                println!("Received data from client: {}", header);
+                // TODO: Handle all posible header options including keep alive, if there is
+                // Connection: close message just close after sent answer
+                // else just maintain listening the socket until client close buffer, is IMPORTANT
+                // to reset the buffer on this case.
+                content.extend_from_slice(&buffer[..size]);
+                if content_length == 0 {
+                    if let Some(length) =
+                        get_content_length(String::from_utf8(content.clone()).unwrap())
+                    {
+                        content_length = length;
+                    }
+                } else if content.len() >= content_length {
+                    // TODO: Sent answer after reading all data
+                }
+                if content.len() < 1024 {
+                    // TODO: Sent answer after reading all data
+                    // ###EXAMPLE
+                    // Example of type of answer as a server, the client will recieve a <h1>Hello, world!</h1>
+                    let response_body = "<h1>Hello, world!</h1>";
+                    let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+                    // Writing answer in socket
+                    if let Err(e) = socket.write_all(response.as_bytes()).await {
+                        eprintln!("Error writing response: {}", e);
+                    }
+                    // ###END OF EXAMPLE
+                }
             }
             Err(e) => {
-                println!("Error reading from socket: {:?}", e);
+                println!("Error reading from socket: {}", e);
                 break;
             }
         }
     }
+}
+
+fn get_content_length(request: String) -> Option<usize> {
+    request
+        .lines()
+        .find(|line| line.starts_with("Content-Length:"))
+        .and_then(|line| line.split(' ').nth(1))
+        .and_then(|value| value.trim().parse::<usize>().ok())
 }

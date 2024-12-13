@@ -20,7 +20,7 @@ async fn test_server() {
     // Create a new server
     let mut server = server::new("127.0.0.1:8080".to_string());
     server.add_route("/", || {
-        println!("New handler");
+        //println!("New handler");
     });
     // Start listening
     server.start().await;

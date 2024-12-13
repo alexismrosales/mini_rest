@@ -1,7 +1,7 @@
-use std::{
-    future::Future,
+use std::{future::Future, pin::Pin};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    pin::Pin,
 };
 
 pub struct Server {
@@ -10,6 +10,9 @@ pub struct Server {
 
 pub trait ServerActions {
     fn start(self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn add_route<F>(&mut self, path: &str, handler: F)
+    where
+        F: Fn() + Send + Sync + 'static;
 }
 
 pub trait ServerInfo {
@@ -42,7 +45,7 @@ pub trait ServerInfo {
 
 impl ServerActions for Server {
     /// To use the `start` function, you need to initialize an async runtime, such as Tokio. Here's an example:
-    /// ```
+    /// ```rust,no_run
     /// use mini_rest::server::{self, ServerActions};
     /// #[tokio::main]
     /// async fn main() {
@@ -56,6 +59,13 @@ impl ServerActions for Server {
                 eprintln!("Error: {}", e);
             }
         })
+    }
+    fn add_route<F>(&mut self, path: &str, _handler: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        // #TOREMOVE
+        println!("Test path: {}", path);
     }
 }
 
@@ -95,10 +105,43 @@ pub fn new(addr: String) -> Server {
 /// This function performs the actual logic for starting the server.
 /// It is separate from the trait `ServerActions` to avoid conflicts and allow more flexibility.
 async fn start_server(server: Server) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(server.address.clone())?;
+    let listener = TcpListener::bind(server.address.clone()).await.unwrap();
     println!("Starting listening at {}...", server.address);
-
-    Ok(())
+    loop {
+        // Wait until accept a new petition from a new client
+        match listener.accept().await {
+            Ok((socket, _)) => {
+                // Proccess connections concurrently
+                tokio::spawn(async move {
+                    handle_client(socket).await;
+                });
+            }
+            Err(e) => println!("Error in acception: {}", e),
+        }
+    }
 }
 
-fn handle_client(mut stream: TcpStream) {}
+async fn handle_client(mut socket: TcpStream) {
+    println!(
+        "New client connected, Remote addr {:?}",
+        socket.peer_addr().unwrap()
+    );
+    socket.set_nodelay(true).unwrap();
+    let mut buffer = [0; 2048];
+    loop {
+        match socket.read(&mut buffer).await {
+            Ok(0) => {
+                println!("Client disconnected");
+                break;
+            }
+            Ok(size) => {
+                let header = String::from_utf8_lossy(&buffer[..size]);
+                println!("Received data from client: {}", header);
+            }
+            Err(e) => {
+                println!("Error reading from socket: {:?}", e);
+                break;
+            }
+        }
+    }
+}
